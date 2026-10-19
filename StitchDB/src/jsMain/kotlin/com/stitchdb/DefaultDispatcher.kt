@@ -1,0 +1,5 @@
+package com.stitchdb
+
+import kotlinx.coroutines.Dispatchers
+
+actual val defaultDispatcher = Dispatchers.Default

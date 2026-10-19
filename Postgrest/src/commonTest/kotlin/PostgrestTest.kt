@@ -1,0 +1,732 @@
+import com.stitchdb.StitchClient
+import com.stitchdb.StitchClientBuilder
+import com.stitchdb.postgrest.Postgrest
+import com.stitchdb.postgrest.RpcMethod
+import com.stitchdb.postgrest.exception.PostgrestRestException
+import com.stitchdb.postgrest.from
+import com.stitchdb.postgrest.postgrest
+import com.stitchdb.postgrest.query.Columns
+import com.stitchdb.postgrest.query.Count
+import com.stitchdb.postgrest.result.PostgrestResult
+import com.stitchdb.postgrest.rpc
+import com.stitchdb.testing.assertMethodIs
+import com.stitchdb.testing.assertPathIs
+import com.stitchdb.testing.createMockedStitchClient
+import com.stitchdb.testing.pathAfterVersion
+import com.stitchdb.testing.toJsonElement
+import io.ktor.client.engine.mock.MockRequestHandleScope
+import io.ktor.client.engine.mock.respond
+import io.ktor.client.request.HttpRequestData
+import io.ktor.client.request.HttpResponseData
+import io.ktor.http.HttpHeaders
+import io.ktor.http.HttpMethod
+import io.ktor.http.HttpStatusCode
+import io.ktor.http.headersOf
+import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.SerializationException
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
+import kotlin.test.AfterTest
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertNull
+
+class PostgrestTest {
+
+    private val configureClient: StitchClientBuilder.() -> Unit = {
+        install(Postgrest)
+    }
+    
+    private lateinit var stitchdb: StitchClient
+
+    @Test
+    fun testUrlLengthLimit() {
+        stitchdb = createMockedStitchClient(
+            configuration = configureClient
+        ) {
+            respond("")
+        }
+        runTest {
+            assertFailsWith<IllegalStateException> {
+                stitchdb.from("schema", "table").select {
+                    filter {
+                        eq("someKey", "a".repeat(8000)) //just to hit the limit
+                    }
+                }
+            }
+        }
+    }
+
+    @Test
+    fun testSelect() {
+        val columns = Columns.list("column1", "column2")
+        testClient(
+            request = { table ->
+                from(table).select(columns)
+            },
+            requestHandler = {
+                assertMethodIs(HttpMethod.Get, it.method)
+                assertEquals(columns.value, it.url.parameters["select"])
+                respond("")
+            }
+        )
+    }
+
+    @Test
+    fun testSingleThrowsOnErrorResponse() {
+        assertFailsWith<PostgrestRestException> {
+            testClient(
+                request = { table ->
+                    from(table).select() {
+                        single()
+                    }
+                },
+                requestHandler = {
+                    respond("""
+                    { "code": "PGRST116", "details": "The result contains 0 rows", "hint": null, "message": "JSON object requested, multiple (or no) rows returned"}
+                """.trimIndent(), HttpStatusCode.BadRequest)
+                }
+            )
+        }
+    }
+
+    @Test
+    fun testMaybeSingleDoesntThrowOnErrorResponse() {
+        testClient(
+            request = { table ->
+                val result = from(table).select() {
+                    maybeSingle()
+                }
+                assertEquals("", result.data)
+                result
+            },
+            requestHandler = {
+                respond("""
+                    { "code": "PGRST116", "details": "The result contains 0 rows", "hint": null, "message": "JSON object requested, multiple (or no) rows returned"}
+                """.trimIndent(), HttpStatusCode.BadRequest)
+            }
+        )
+    }
+
+    @Test
+    fun testSelectSchema() {
+        val columns = Columns.list("column1", "column2")
+        testClient(
+            request = { table ->
+                from("schema", table).select(columns)
+            },
+            requestHandler = {
+                assertEquals("schema", it.headers["Accept-Profile"])
+                assertMethodIs(HttpMethod.Get, it.method)
+                assertEquals(columns.value, it.url.parameters["select"])
+                respond("")
+            }
+        )
+    }
+
+    @Test
+    fun testOperatorGet() {
+        val columns = Columns.list("column1", "column2")
+        testClient(
+            request = { table ->
+                postgrest[table].select(columns)
+            },
+            requestHandler = {
+                assertMethodIs(HttpMethod.Get, it.method)
+                assertEquals(columns.value, it.url.parameters["select"])
+                respond("")
+            }
+        )
+    }
+
+    @Test
+    fun testOperatorGetSchema() {
+        val columns = Columns.list("column1", "column2")
+        testClient(
+            request = { table ->
+                postgrest["schema", table].select(columns)
+            },
+            requestHandler = {
+                assertEquals("schema", it.headers["Accept-Profile"])
+                assertMethodIs(HttpMethod.Get, it.method)
+                assertEquals(columns.value, it.url.parameters["select"])
+                respond("")
+            }
+        )
+    }
+
+    @Test
+    fun testSelectHttpMethodHead() {
+        val columns = Columns.list("column1", "column2")
+        testClient(
+            request = { table ->
+                from(table).select(columns) {
+                    head = true
+                }
+            },
+            requestHandler = {
+                assertMethodIs(HttpMethod.Head, it.method)
+                assertEquals(columns.value, it.url.parameters["select"])
+                respond("")
+            }
+        )
+    }
+
+    @Test
+    fun testSelectHttpMethodHeadColumnList() {
+        val columns = Columns.list(listOf("column1", "column2"))
+        testClient(
+            request = { table ->
+                from(table).select(columns) {
+                    head = true
+                }
+            },
+            requestHandler = {
+                assertMethodIs(HttpMethod.Head, it.method)
+                assertEquals(columns.value, it.url.parameters["select"])
+                respond("")
+            }
+        )
+    }
+
+    @Test
+    fun testInsertValues() {
+        val values = listOf(TestObject("mockData1"), TestObject("mockData2"))
+        val expectedBody = JsonArray(listOf(
+            buildJsonObject { put("data", "mockData1") },
+            buildJsonObject { put("data", "mockData2") }
+        ))
+        testClient(
+            request = { table ->
+                from("schema", table).insert(values)
+            },
+            requestHandler = {
+                assertMethodIs(HttpMethod.Post, it.method)
+                val receivedBody = it.body.toJsonElement()
+                assertEquals(expectedBody, receivedBody)
+                assertEquals("data", it.url.parameters["columns"])
+                assertEquals("schema", it.headers["Content-Profile"])
+                respond("")
+            }
+        )
+    }
+
+    @Test
+    fun testUpsertValues() {
+        val values = listOf(TestObject("mockData1"), TestObject("mockData2"))
+        val expectedBody = JsonArray(listOf(
+            buildJsonObject { put("data", "mockData1") },
+            buildJsonObject { put("data", "mockData2") }
+        ))
+        testClient(
+            request = { table ->
+                from("schema", table).upsert(values)
+            },
+            requestHandler = {
+                assertMethodIs(HttpMethod.Post, it.method)
+                val receivedBody = it.body.toJsonElement()
+                assertEquals(expectedBody, receivedBody)
+                assertEquals("data", it.url.parameters["columns"])
+                assertEquals("schema", it.headers["Content-Profile"])
+                respond("")
+            }
+        )
+    }
+
+    @Test
+    fun testUpdate() {
+        val body = buildJsonObject {
+            put("key", "value")
+            put("key2", "value")
+        }
+        testClient(
+            request = { table ->
+                from("schema", table).update(body) {
+                    assertEquals(body, this.body)
+                }
+            },
+            requestHandler = {
+                assertMethodIs(HttpMethod.Patch, it.method)
+                val receivedBody = it.body.toJsonElement()
+                assertEquals(body, receivedBody)
+                assertEquals("schema", it.headers["Content-Profile"])
+                respond("")
+            }
+        )
+    }
+
+    @Test
+    fun testUpdateManual() {
+        testClient(
+            request = { table ->
+                from("schema", table).update({
+                    set("key", "value")
+                    set("key2", "value2")
+                }) {
+                    assertEquals(body, this.body)
+                }
+            },
+            requestHandler = {
+                assertMethodIs(HttpMethod.Patch, it.method)
+                val receivedBody = it.body.toJsonElement().jsonObject
+                assertEquals("value", receivedBody["key"]?.jsonPrimitive?.content)
+                assertEquals("value2", receivedBody["key2"]?.jsonPrimitive?.content)
+                assertEquals("schema", it.headers["Content-Profile"])
+                respond("")
+            }
+        )
+    }
+
+    @Test
+    fun testUpdateValue() {
+        val value = TestObject.mock
+        val expectedBody = buildJsonObject { put("data", "mockData") }
+        testClient(
+            request = { table ->
+                from("schema", table).update(value)
+            },
+            requestHandler = {
+                assertMethodIs(HttpMethod.Patch, it.method)
+                val receivedBody = it.body.toJsonElement()
+                assertEquals(expectedBody, receivedBody)
+                assertEquals("schema", it.headers["Content-Profile"])
+                respond("")
+            }
+        )
+    }
+
+    @Test
+    fun testDelete() {
+        testClient(
+            request = { table ->
+                from("schema", table).delete {
+                    filter {
+                        eq("key", "value")
+                    }
+                }
+            },
+            requestHandler = {
+                assertMethodIs(HttpMethod.Delete, it.method)
+                assertEquals("schema", it.headers["Content-Profile"])
+                assertEquals("eq.value", it.url.parameters["key"])
+                respond("")
+            }
+        )
+    }
+
+    @Test
+    fun testUpdateWithRequest() {
+        testClient(
+            request = { table ->
+                from("schema", table).update({
+                    set("key", "value")
+                }) {
+                    select()
+                }
+            },
+            requestHandler = {
+                assertMethodIs(HttpMethod.Patch, it.method)
+                val preferSet = it.headers["Prefer"]?.split(",")?.toSet() ?: emptySet()
+                assertEquals(setOf("return=representation"), preferSet)
+                assertEquals("*", it.url.parameters["select"])
+                respond("")
+            }
+        )
+    }
+
+    @Test
+    fun testDeleteWithRequest() {
+        testClient(
+            request = { table ->
+                from("schema", table).delete {
+                    filter {
+                        eq("key", "value")
+                    }
+                    count(Count.ESTIMATED)
+                    select()
+                }
+            },
+            requestHandler = {
+                assertMethodIs(HttpMethod.Delete, it.method)
+                assertEquals("schema", it.headers["Content-Profile"])
+                assertEquals("eq.value", it.url.parameters["key"])
+                val preferSet = it.headers["Prefer"]?.split(",")?.toSet() ?: emptySet()
+                assertEquals(setOf("count=estimated", "return=representation"), preferSet)
+                assertEquals("*", it.url.parameters["select"])
+                respond("")
+            }
+        )
+    }
+
+    @Test
+    fun testUpsertWithRequest() {
+        val body = JsonArray(listOf(buildJsonObject { put("key", "value") }))
+        testClient(
+            request = { table ->
+                from("schema", table).upsert(body) {
+                    onConflict = "key"
+                    ignoreDuplicates = true
+                    select()
+                }
+            },
+            requestHandler = {
+                assertMethodIs(HttpMethod.Post, it.method)
+                assertEquals("key", it.url.parameters["on_conflict"])
+                val preferSet = it.headers["Prefer"]?.split(",")?.toSet() ?: emptySet()
+                assertEquals(setOf("resolution=ignore-duplicates", "return=representation"), preferSet)
+                assertEquals("*", it.url.parameters["select"])
+                respond("")
+            }
+        )
+    }
+
+    @Test
+    fun testDeleteEmptyParams() {
+        testClient(
+            request = { table ->
+                from("schema", table).delete()
+            },
+            requestHandler = {
+                assertMethodIs(HttpMethod.Delete, it.method)
+                assertEquals("schema", it.headers["Content-Profile"])
+                respond("")
+            }
+        )
+    }
+
+    @Test
+    fun testUpdateEmptyParams() {
+        testClient(
+            request = { table ->
+                from("schema", table).update({ set("key", "value") })
+            },
+            requestHandler = {
+                assertMethodIs(HttpMethod.Patch, it.method)
+                assertEquals("schema", it.headers["Content-Profile"])
+                respond("")
+            }
+        )
+    }
+
+    @Test
+    fun testUpsertEmptyParams() {
+        val body = JsonArray(listOf(buildJsonObject { put("key", "value") }))
+        testClient(
+            request = { table ->
+                from("schema", table).upsert(body)
+            },
+            requestHandler = {
+                assertMethodIs(HttpMethod.Post, it.method)
+                assertEquals("schema", it.headers["Content-Profile"])
+                respond("")
+            }
+        )
+    }
+
+    @Test
+    fun testInsertEmptyParams() {
+        val body = JsonArray(listOf(buildJsonObject { put("key", "value") }))
+        testClient(
+            request = { table ->
+                from("schema", table).insert(body)
+            },
+            requestHandler = {
+                assertMethodIs(HttpMethod.Post, it.method)
+                assertEquals("schema", it.headers["Content-Profile"])
+                respond("")
+            }
+        )
+    }
+
+    @Test
+    fun testRpcNoParameters() {
+        stitchdb = createMockedStitchClient(
+            configuration = configureClient
+        ) {
+            assertPathIs("/rpc/function", it.url.pathAfterVersion())
+            assertMethodIs(HttpMethod.Head, it.method)
+            assertEquals("schema", it.headers["Accept-Profile"])
+            respond("")
+        }
+        runTest {
+            stitchdb.postgrest.rpc("function") {
+                method = RpcMethod.HEAD
+                schema = "schema"
+            }
+        }
+    }
+
+    @Test
+    fun testRpcGenericParameters() {
+        val mockData = TestObject.mock
+        val expectedJson = buildJsonObject { put("data", mockData.data) }
+        stitchdb = createMockedStitchClient(
+            configuration = configureClient
+        ) {
+            assertPathIs("/rpc/function", it.url.pathAfterVersion())
+            assertEquals(expectedJson, it.body.toJsonElement())
+            assertMethodIs(HttpMethod.Post, it.method)
+            assertEquals("schema", it.headers["Content-Profile"])
+            respond("")
+        }
+        runTest {
+            stitchdb.postgrest.rpc("function", mockData) {
+                schema = "schema"
+            }
+        }
+    }
+
+    @Test
+    fun testRpcGenericParametersDefaultRequest() {
+        val mockData = TestObject.mock
+        val expectedJson = buildJsonObject { put("data", mockData.data) }
+        stitchdb = createMockedStitchClient(
+            configuration = configureClient
+        ) {
+            assertPathIs("/rpc/function", it.url.pathAfterVersion())
+            assertEquals(expectedJson, it.body.toJsonElement())
+            assertMethodIs(HttpMethod.Post, it.method)
+            assertEquals("public", it.headers["Content-Profile"])
+            respond("")
+        }
+        runTest {
+            stitchdb.postgrest.rpc("function", mockData)
+        }
+    }
+
+    @Test
+    fun testRpcReturnsNull() {
+        stitchdb = createMockedStitchClient(
+            configuration = configureClient
+        ) {
+            respond("null")
+        }
+
+        runTest {
+            val result = stitchdb.postgrest.rpc("get_nullable_value")
+            val value = result.decodeAs<String?>()
+            assertNull(value)
+        }
+    }
+
+    @Test
+    fun testRpcReturnsStringNull() {
+        stitchdb = createMockedStitchClient(
+            configuration = configureClient
+        ) {
+            respond("\"null\"")
+        }
+
+        runTest {
+            val result = stitchdb.postgrest.rpc("get_text_value")
+            val value = result.decodeAs<String?>()
+            assertEquals("null", value)
+        }
+    }
+
+    @Test
+    fun testRpcNoParametersDefaultRequest() {
+        stitchdb = createMockedStitchClient(
+            configuration = configureClient
+        ) {
+            assertPathIs("/rpc/function", it.url.pathAfterVersion())
+            assertMethodIs(HttpMethod.Post, it.method)
+            assertEquals("public", it.headers["Content-Profile"])
+            respond("")
+        }
+        runTest {
+            stitchdb.postgrest.rpc("function")
+        }
+    }
+
+    @Test
+    fun testRpcParametersDefaultRequest() {
+        val mockData = buildJsonObject {
+            put("key", "value")
+        }
+        stitchdb = createMockedStitchClient(
+            configuration = configureClient
+        ) {
+            assertPathIs("/rpc/function", it.url.pathAfterVersion())
+            assertEquals(mockData, it.body.toJsonElement())
+            assertMethodIs(HttpMethod.Post, it.method)
+            assertEquals("public", it.headers["Content-Profile"])
+            respond("")
+        }
+        runTest {
+            stitchdb.postgrest.rpc("function", mockData)
+        }
+    }
+
+    @Test
+    fun testRpcParametersWithHeadMethod() {
+        val mockData = buildJsonObject {
+            put("key", "value")
+        }
+        stitchdb = createMockedStitchClient(
+            configuration = configureClient
+        ) {
+            assertPathIs("/rpc/function", it.url.pathAfterVersion())
+            assertMethodIs(HttpMethod.Head, it.method)
+            val body = it.body.toJsonElement().jsonObject
+            assertEquals("value", body["key"]?.jsonPrimitive?.content)
+            assertEquals("schema", it.headers["Accept-Profile"])
+            respond("")
+        }
+        runTest {
+            stitchdb.postgrest.rpc("function", mockData) {
+                schema = "schema"
+                method = RpcMethod.HEAD
+            }
+        }
+    }
+
+    /** Decode Truth Table **/
+
+    @Serializable
+    data class TestObject(val data: String) {
+        companion object {
+            val mock = TestObject("mockData")
+        }
+    }
+
+    @Test
+    fun testDecodeAsNullableTypeMatchingResponseAndResult() {
+        stitchdb = createMockedStitchClient(configuration = configureClient) {
+            respond(Json.encodeToString(TestObject.mock))
+        }
+        runTest {
+            val result = stitchdb.postgrest.rpc("function")
+            val value = result.decodeAs<TestObject?>()
+            assertEquals(TestObject.mock, value)
+        }
+    }
+
+    @Test
+    fun testDecodeAsNullableTypeMismatchedResponseFailure() {
+        stitchdb = createMockedStitchClient(configuration = configureClient) {
+            respond("[]")
+        }
+        runTest {
+            val result = stitchdb.postgrest.rpc("function")
+            assertFailsWith<SerializationException> {
+                result.decodeAs<TestObject?>()
+            }
+        }
+    }
+
+    @Test
+    fun testDecodeAsNullableTypeNullResponseNullResult() {
+        stitchdb = createMockedStitchClient(configuration = configureClient) {
+            respond("null")
+        }
+        runTest {
+            val result = stitchdb.postgrest.rpc("function")
+            val value = result.decodeAs<TestObject?>()
+            assertNull(value)
+        }
+    }
+
+    private fun testClient(
+        table: String = "table",
+        request: suspend StitchClient.(table: String) -> PostgrestResult,
+        requestHandler: suspend MockRequestHandleScope.(HttpRequestData) -> HttpResponseData = { respond("")},
+    ) {
+        stitchdb = createMockedStitchClient(
+            configuration = configureClient
+        ) {
+            assertPathIs("/$table", it.url.pathAfterVersion())
+            requestHandler(it)
+        }
+        runTest {
+            stitchdb.request(table)
+        }
+    }
+
+    @Test
+    fun testParseErrorResponse() {
+        stitchdb = createMockedStitchClient(
+            configuration = configureClient
+        ) {
+            respond(
+                content = """{"message": "error msg", "hint": "error hint", "details": "error details", "code": "123"}""",
+                status = HttpStatusCode.BadRequest,
+                headers = headersOf(HttpHeaders.ContentType, "application/json")
+            )
+        }
+        runTest {
+            val exception = assertFailsWith<PostgrestRestException> {
+                stitchdb.postgrest["table"].select()
+            }
+            assertEquals("error msg", exception.error)
+            assertEquals("error hint", exception.hint)
+            assertEquals("error details", exception.details?.jsonPrimitive?.content)
+            assertEquals("123", exception.code)
+        }
+    }
+
+    @Test
+    fun testParseErrorResponseMessage() {
+        stitchdb = createMockedStitchClient(
+            configuration = configureClient
+        ) {
+            respond(
+                content = """{"message": "error msg", "hint": "error hint", "details": "error details", "code": "123"}""",
+                status = HttpStatusCode.BadRequest,
+                headers = headersOf(HttpHeaders.ContentType, "application/json")
+            )
+        }
+        runTest {
+            val exception = assertFailsWith<PostgrestRestException> {
+                stitchdb.postgrest["table"].select()
+            }
+            assertEquals(HttpStatusCode.BadRequest.value, exception.statusCode)
+            assertEquals(
+                """
+                    Code: 123
+                    Hint: error hint
+                    Details: "error details"
+                """.trimIndent(),
+                exception.description
+            )
+        }
+    }
+
+    @Test
+    fun testParseErrorResponseNullBody() {
+        stitchdb = createMockedStitchClient(
+            configuration = configureClient
+        ) {
+            respond(
+                content = "Internal Server Error",
+                status = HttpStatusCode.InternalServerError,
+                headers = headersOf(HttpHeaders.ContentType, "text/plain")
+            )
+        }
+        runTest {
+            val exception = assertFailsWith<PostgrestRestException> {
+                stitchdb.postgrest["table"].select()
+            }
+            assertEquals("Unknown error", exception.error)
+            assertNull(exception.hint)
+            assertNull(exception.details)
+            assertNull(exception.code)
+        }
+    }
+
+    @AfterTest
+    fun cleanup() {
+        runTest {
+            if(::stitchdb.isInitialized) {
+                stitchdb.close()
+            }
+        }
+    }
+
+}
