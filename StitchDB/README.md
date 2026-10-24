@@ -49,7 +49,7 @@ dependencies {
 ```kotlin
 //Create a StitchDB client
 val stitchdb = createStitchClient(
-    stitchdbUrl = "https://<project-ref>.stitchdb.com",
+    stitchdbUrl = "https://<project-ref>.p.stitchdb.com",
     stitchdbKey = "your-anon-key" // Settings → API keys
 ) {
     //Change default settings

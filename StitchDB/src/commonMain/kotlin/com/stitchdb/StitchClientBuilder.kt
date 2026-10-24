@@ -175,7 +175,7 @@ class StitchClientBuilder @PublishedApi internal constructor(
 
 /**
  * Creates a new [StitchClient] instance using [builder]
- * @param stitchdbUrl The stitchdb url. Example: 'id.stitchdb.com' or 'https://id.stitchdb.com' (no 'https://id.stitchdb.com/auth/v1')
+ * @param stitchdbUrl The stitchdb url. Example: '<project-ref>.p.stitchdb.com' or 'https://<project-ref>.p.stitchdb.com' (no 'https://<project-ref>.p.stitchdb.com/auth/v1')
  * @param stitchdbKey The stitchdb api key
  */
 inline fun createStitchClient(stitchdbUrl: String, stitchdbKey: String, builder: StitchClientBuilder.() -> Unit) = StitchClientBuilder(stitchdbUrl, stitchdbKey).apply(builder).build()

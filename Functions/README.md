@@ -45,7 +45,7 @@ dependencies {
 Install the plugin in your StitchClient. See the [documentation](https://stitchdb.com/docs/sdk/kotlin) for more information
 ```kotlin
 val client = createStitchClient(
-    stitchdbUrl = "https://<project-ref>.stitchdb.com",
+    stitchdbUrl = "https://<project-ref>.p.stitchdb.com",
     stitchdbKey = "your-anon-key" // Settings → API keys
 ) {
     

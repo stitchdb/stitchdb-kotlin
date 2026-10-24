@@ -4,16 +4,26 @@ The official Kotlin Multiplatform client for [StitchDB](https://stitchdb.com): P
 
 ## Install
 
-Use the BOM so all modules stay on the same version:
+Clone this repository next to your app and include it in your Gradle build (Gradle builds the modules you use from source):
 
 ```kotlin
+// settings.gradle.kts
+includeBuild("../stitchdb-kotlin") {
+    dependencySubstitution {
+        for (m in listOf("stitchdb-kt", "auth-kt", "postgrest-kt", "storage-kt", "realtime-kt", "functions-kt"))
+            substitute(module("com.stitchdb:$m")).using(project(":$m"))
+    }
+}
+```
+
+```kotlin
+// build.gradle.kts
 dependencies {
-    implementation(platform("com.stitchdb:bom:1.0.0"))
-    implementation("com.stitchdb:postgrest-kt")
-    implementation("com.stitchdb:auth-kt")
-    implementation("com.stitchdb:storage-kt")
-    implementation("com.stitchdb:realtime-kt")
-    implementation("com.stitchdb:functions-kt")
+    implementation("com.stitchdb:postgrest-kt:1.0.0")
+    implementation("com.stitchdb:auth-kt:1.0.0")
+    implementation("com.stitchdb:storage-kt:1.0.0")
+    implementation("com.stitchdb:realtime-kt:1.0.0")
+    implementation("com.stitchdb:functions-kt:1.0.0")
     implementation("io.ktor:ktor-client-okhttp:3.4.3") // or any other Ktor engine
 }
 ```
@@ -33,7 +43,7 @@ dependencies {
 
 ```kotlin
 val stitchdb = createStitchClient(
-    stitchdbUrl = System.getenv("STITCHDB_URL"),     // https://<project-ref>.stitchdb.com
+    stitchdbUrl = System.getenv("STITCHDB_URL"),     // https://<project-ref>.p.stitchdb.com
     stitchdbKey = System.getenv("STITCHDB_ANON_KEY") // Settings → API keys
 ) {
     install(Auth)
