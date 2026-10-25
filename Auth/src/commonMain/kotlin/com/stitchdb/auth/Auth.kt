@@ -33,6 +33,7 @@ import com.stitchdb.exceptions.HttpRequestException
 import com.stitchdb.exceptions.RestException
 import com.stitchdb.plugins.CustomSerializationPlugin
 import com.stitchdb.plugins.MainPlugin
+import com.stitchdb.plugins.SessionTokenSource
 import com.stitchdb.plugins.StitchPluginProvider
 import io.ktor.client.plugins.HttpRequestTimeoutException
 import kotlinx.coroutines.CoroutineScope
@@ -58,7 +59,7 @@ import kotlinx.serialization.json.JsonObject
  * }
  * ```
  */
-interface Auth : MainPlugin<AuthConfig>, CustomSerializationPlugin {
+interface Auth : MainPlugin<AuthConfig>, CustomSerializationPlugin, SessionTokenSource {
 
     /**
      * Returns the current session status
@@ -500,7 +501,7 @@ interface Auth : MainPlugin<AuthConfig>, CustomSerializationPlugin {
     /**
      * Returns the current access token, or null if no session is available
      */
-    fun currentAccessTokenOrNull() = currentSessionOrNull()?.accessToken
+    override fun currentAccessTokenOrNull(): String? = currentSessionOrNull()?.accessToken
 
     /**
      * Returns the current session or null
