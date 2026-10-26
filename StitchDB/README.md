@@ -36,7 +36,7 @@ Supported targets:
 
 *You don't necessarily need to install this library directly. It is a dependency of the other stitchdb-kt libraries.*
 
-Newest version: 1.0.0 (use the BOM: `com.stitchdb:bom`)
+Newest version: 1.1.0 (use the BOM: `com.stitchdb:bom`)
 
 ```kotlin
 dependencies {
@@ -97,3 +97,46 @@ A local write wins over a pulled change until it is pushed. If the server report
 the local copy takes the server's row and `conflicts` emits an event. Implement `OfflineStore` (`get`, `set`,
 `delete`, `entries(prefix)`, `clear` over string keys and `JsonElement` values) to persist the copy on disk;
 call `setOnline(true/false)` from your connectivity callback to sync as soon as the device is back online.
+
+# Crash reporting
+
+Uncaught exceptions (JVM and Android) and errors you report yourself, grouped into issues in Studio › Crashes with
+the stack (`stackTraceToString()`, including "Caused by"), app version, device, the signed-in user and the last
+breadcrumbs: what the user did and the API calls the SDK made ("crashed right after `GET /rest/v1/orders` returned
+500"). Nothing is captured, recorded or sent before `start()`, and nothing is sent unless crash reporting is turned on
+for the project (Studio › Crashes). Ask for consent first where you need it, or decide per report in `beforeSend`.
+
+```kotlin
+stitchdb.crashes.start(
+    release = "1.4.0",            // issues and crash-free users are shown per release
+    environment = "production",
+    captureUnhandled = true,      // Thread.setDefaultUncaughtExceptionHandler; the previous handler still runs
+    maxBreadcrumbs = 50,          // at most 100
+    beforeSend = { report -> if (userConsented) report.copy(context = JsonObject(emptyMap())) else null },
+)
+// Android: stitchdb.crashes.start(context, release = "1.4.0") keeps reports in filesDir
+
+try { checkout() } catch (e: Exception) {
+    stitchdb.crashes.captureException(e, context = mapOf("step" to "payment"))
+}
+stitchdb.crashes.captureMessage("cart total is negative")
+stitchdb.crashes.addBreadcrumb(type = "ui", message = "tapped Checkout", data = mapOf("items" to 3))
+stitchdb.crashes.queued.collect { println("$it reports waiting") } // StateFlow<Int>
+stitchdb.crashes.flush()          // send now (suspends)
+stitchdb.crashes.stop()           // remove the handlers, e.g. when consent is withdrawn
+```
+
+- Every request the SDK makes (database, auth, storage, functions, ...) becomes an `api` breadcrumb with the method,
+  the path and only the *names* of the query parameters (`GET /rest/v1/orders?select&id 500`), the status, the error
+  code of an error response and the duration. No bodies, no query values.
+- A crash is written to disk synchronously (with `java.io`) before the previous handler runs, and sent on the next
+  `start()`. Handled reports are queued on disk and sent in the background. At most 30 reports wait; reports that
+  could not be sent (offline, server busy) are retried on the next start.
+- Where reports wait: on the JVM `~/.stitchdb/crashes/<project host>` (or `<java.io.tmpdir>/stitchdb-crashes/<project
+  host>` without a writable home directory), or `start(directory = ...)`. On Android `filesDir/stitchdb-crashes/<project
+  host>` with `start(context, ...)`, else the app's cache directory. On JS, Wasm and native targets reports wait in
+  memory and only `captureException`/`captureMessage` report (no uncaught hook).
+- Reports carry `platform` `android` or `kotlin`, an install id kept in that directory, and the device (`os`,
+  `os_version`, `model`, `locale`). Once a day per install and release a session is sent for crash-free users.
+- Requests go to `{projectUrl}/crashes/v1` as the signed-in user (session token, else the project key). Passwords,
+  tokens, keys and e-mail addresses are removed by StitchDB before anything is stored.
