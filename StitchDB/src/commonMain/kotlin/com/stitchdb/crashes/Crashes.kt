@@ -103,8 +103,15 @@ private const val QUEUE_FILE = "queue.json"
 private const val INSTALL_FILE = "install"
 private const val SESSION_FILE = "session"
 private const val CRASHES_PATH = "/crashes/v1/"
+private const val ANALYTICS_PATH = "/analytics/v1/"
 
-private fun nowIso(): String = Clock.System.now().toString()
+internal fun nowIso(): String = Clock.System.now().toString()
+
+/** `Authorization: Bearer` for crash reports and analytics: the signed-in user's session token, else the project key. */
+@OptIn(StitchInternal::class)
+internal suspend fun StitchClient.reportingToken(): String = accessToken?.invoke()
+    ?: pluginManager.installedPlugins.values.firstNotNullOfOrNull { (it as? SessionTokenSource)?.currentAccessTokenOrNull() }
+    ?: stitchdbKey
 
 private val crashJson = Json {
     encodeDefaults = true
@@ -125,7 +132,7 @@ internal fun Any?.toJsonElement(): JsonElement = when (this) {
     else -> JsonPrimitive(toString())
 }
 
-private fun Map<String, Any?>.toJsonObject() = JsonObject(mapValues { it.value.toJsonElement() })
+internal fun Map<String, Any?>.toJsonObject() = JsonObject(mapValues { it.value.toJsonElement() })
 
 /** `/rest/v1/orders?select&id`: the path and the query keys, no values and no host. */
 internal fun breadcrumbUrl(url: Url): String {
@@ -182,7 +189,8 @@ class CrashesClient internal constructor(private val stitch: StitchClient) {
     val queued: StateFlow<Int> = _queued.asStateFlow()
 
     private val apiListener = ApiCallListener { method, url, status, errorCode, error, ms ->
-        if (CRASHES_PATH in url.encodedPath) return@ApiCallListener
+        // our own calls (and the analytics batches) are not what the user did
+        if (CRASHES_PATH in url.encodedPath || ANALYTICS_PATH in url.encodedPath) return@ApiCallListener
         val path = breadcrumbUrl(url)
         addBreadcrumb(
             Breadcrumb(
@@ -388,9 +396,7 @@ class CrashesClient internal constructor(private val stitch: StitchClient) {
     }
 
     private suspend fun post(path: String, body: JsonObject): HttpResponse {
-        val token = stitch.accessToken?.invoke()
-            ?: stitch.pluginManager.installedPlugins.values.firstNotNullOfOrNull { (it as? SessionTokenSource)?.currentAccessTokenOrNull() }
-            ?: stitch.stitchdbKey
+        val token = stitch.reportingToken()
         return stitch.httpClient.request("$base/$path") {
             method = HttpMethod.Post
             bearerAuth(token)

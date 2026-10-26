@@ -36,7 +36,7 @@ Supported targets:
 
 *You don't necessarily need to install this library directly. It is a dependency of the other stitchdb-kt libraries.*
 
-Newest version: 1.1.0 (use the BOM: `com.stitchdb:bom`)
+Newest version: 1.2.0 (use the BOM: `com.stitchdb:bom`)
 
 ```kotlin
 dependencies {
@@ -140,3 +140,42 @@ stitchdb.crashes.stop()           // remove the handlers, e.g. when consent is w
   `os_version`, `model`, `locale`). Once a day per install and release a session is sent for crash-free users.
 - Requests go to `{projectUrl}/crashes/v1` as the signed-in user (session token, else the project key). Passwords,
   tokens, keys and e-mail addresses are removed by StitchDB before anything is stored.
+
+# Analytics
+
+Product analytics: the events your app tracks, linked to the signed-in user (an anonymous id before sign-in, merged
+into the user when they sign in), for active users, funnels, retention and breakdowns in Studio › Analytics. Nothing
+is sent before `start()`, and nothing unless analytics is turned on for the project (Studio › Analytics).
+
+```kotlin
+stitchdb.analytics.start(
+    release = "1.4.0",                  // for the breakdown by release
+    flushInterval = 10.seconds,         // also sent when 20 events wait and on sign-in / sign-out
+    beforeSend = { event -> if (userConsented) event else null }, // change an event or drop it
+)
+// Android: stitchdb.analytics.start(context, release = "1.4.0") keeps the queue in filesDir
+
+stitchdb.analytics.track("purchase", mapOf("plan" to "pro", "amount" to 29))
+stitchdb.analytics.queued.collect { println("$it events waiting") } // StateFlow<Int>
+stitchdb.analytics.flush()              // send now (suspends)
+stitchdb.analytics.optOut()             // deletes the user's events, nothing is tracked any more (suspends)
+stitchdb.analytics.optIn()              // track again
+stitchdb.analytics.isOptedOut           // remembered on the device
+stitchdb.analytics.anonymousId          // the id of this device before sign-in
+stitchdb.analytics.stop()               // stop sending; waiting events stay on the device
+```
+
+- Event names: letters, digits, `_ $ . : - /` and spaces, up to 64 characters; other names are dropped (with a debug
+  log). Props: strings, numbers, booleans, lists and maps, at most 8 KB (flat values are easiest to break down by).
+- Events tracked before `start()` wait in memory (at most 100). After it they are sent in batches of up to 100 in the
+  background and written to disk on every change, so they survive the app being killed while offline (at most 1000,
+  the oldest go first). When the server is busy, the month's events are used up (429) or the device is offline, they
+  are retried later; when analytics is off for the project (404/403) the queue is cleared for this run.
+- Where events wait: on the JVM `~/.stitchdb/analytics/<project host>` (or `<java.io.tmpdir>/stitchdb-analytics/<project
+  host>` without a writable home directory), or `start(directory = ...)`. On Android `filesDir/stitchdb-analytics/<project
+  host>` with `start(context, ...)`, else the app's cache directory. On JS, Wasm and native targets events wait in memory.
+- Every batch carries the anonymous id, a session id per app launch, the release, `platform` (`android` or `kotlin`),
+  `os` and `country` (the region of the device locale). Requests go to `{projectUrl}/analytics/v1` as the signed-in user
+  (session token, else the project key); a batch is sent when the user signs in or out, so it belongs to one user.
+  Passwords, tokens, keys and e-mail addresses are removed by StitchDB before anything is stored.
+- Analytics requests are not recorded as crash reporting breadcrumbs.

@@ -1,6 +1,7 @@
 package com.stitchdb
 
 import com.stitchdb.annotations.StitchInternal
+import com.stitchdb.analytics.AnalyticsClient
 import com.stitchdb.crashes.CrashesClient
 import com.stitchdb.logging.StitchLogger
 import com.stitchdb.logging.createLogger
@@ -76,6 +77,11 @@ interface StitchClient {
      * Crash and error reporting for this client: nothing is captured or sent until [CrashesClient.start].
      */
     val crashes: CrashesClient
+
+    /**
+     * Product analytics for this client: nothing is sent until [AnalyticsClient.start].
+     */
+    val analytics: AnalyticsClient
 
     /**
      * Releases all resources held by the [httpClient] and all plugins the [pluginManager]
@@ -169,9 +175,13 @@ internal class StitchClientImpl(
     private val crashesDelegate = lazy { CrashesClient(this) }
     override val crashes: CrashesClient by crashesDelegate
 
+    private val analyticsDelegate = lazy { AnalyticsClient(this) }
+    override val analytics: AnalyticsClient by analyticsDelegate
+
     override suspend fun close() {
         logger.i { "Closing StitchClient" }
         if (crashesDelegate.isInitialized()) crashes.stop()
+        if (analyticsDelegate.isInitialized()) analytics.stop()
         httpClient.close()
         pluginManager.closeAllPlugins()
     }

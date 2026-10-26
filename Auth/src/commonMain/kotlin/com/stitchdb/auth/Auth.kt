@@ -37,7 +37,11 @@ import com.stitchdb.plugins.SessionTokenSource
 import com.stitchdb.plugins.StitchPluginProvider
 import io.ktor.client.plugins.HttpRequestTimeoutException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.serialization.json.JsonObject
 
@@ -502,6 +506,15 @@ interface Auth : MainPlugin<AuthConfig>, CustomSerializationPlugin, SessionToken
      * Returns the current access token, or null if no session is available
      */
     override fun currentAccessTokenOrNull(): String? = currentSessionOrNull()?.accessToken
+
+    /**
+     * The signed-in user's id (null while signed out), emitted on sign-in and sign-out; token refreshes do not emit.
+     */
+    override val signedInUserIds: Flow<String?>
+        get() = sessionStatus
+            .filter { it is SessionStatus.Authenticated || it is SessionStatus.NotAuthenticated }
+            .map { (it as? SessionStatus.Authenticated)?.session?.user?.id }
+            .distinctUntilChanged()
 
     /**
      * Returns the current session or null
