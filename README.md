@@ -19,11 +19,11 @@ includeBuild("../stitchdb-kotlin") {
 ```kotlin
 // build.gradle.kts
 dependencies {
-    implementation("com.stitchdb:postgrest-kt:1.2.0")
-    implementation("com.stitchdb:auth-kt:1.2.0")
-    implementation("com.stitchdb:storage-kt:1.2.0")
-    implementation("com.stitchdb:realtime-kt:1.2.0")
-    implementation("com.stitchdb:functions-kt:1.2.0")
+    implementation("com.stitchdb:postgrest-kt:1.3.0")
+    implementation("com.stitchdb:auth-kt:1.3.0")
+    implementation("com.stitchdb:storage-kt:1.3.0")
+    implementation("com.stitchdb:realtime-kt:1.3.0")
+    implementation("com.stitchdb:functions-kt:1.3.0")
     implementation("io.ktor:ktor-client-okhttp:3.4.3") // or any other Ktor engine
 }
 ```

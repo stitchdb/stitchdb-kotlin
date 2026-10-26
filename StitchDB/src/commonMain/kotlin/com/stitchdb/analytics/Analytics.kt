@@ -309,6 +309,9 @@ class AnalyticsClient internal constructor(private val stitch: StitchClient) {
         setBody(body)
     }
 
+    /** The store analytics uses (the chosen directory once [start] ran, else the default), for the deep links flag. */
+    internal fun deviceStore(): CrashStore = store()
+
     private fun store(): CrashStore = storeRef ?: analyticsStore(null, projectHost).also { storeRef = it }
 
     private fun loadAnonId(store: CrashStore): String {

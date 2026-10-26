@@ -3,6 +3,7 @@ package com.stitchdb
 import com.stitchdb.annotations.StitchInternal
 import com.stitchdb.analytics.AnalyticsClient
 import com.stitchdb.crashes.CrashesClient
+import com.stitchdb.links.LinksClient
 import com.stitchdb.logging.StitchLogger
 import com.stitchdb.logging.createLogger
 import com.stitchdb.logging.i
@@ -82,6 +83,12 @@ interface StitchClient {
      * Product analytics for this client: nothing is sent until [AnalyticsClient.start].
      */
     val analytics: AnalyticsClient
+
+    /**
+     * Deep links and short links (Studio › Links): resolve the link the app was opened with, the deferred link after an
+     * install, and make links.
+     */
+    val links: LinksClient
 
     /**
      * Releases all resources held by the [httpClient] and all plugins the [pluginManager]
@@ -177,6 +184,8 @@ internal class StitchClientImpl(
 
     private val analyticsDelegate = lazy { AnalyticsClient(this) }
     override val analytics: AnalyticsClient by analyticsDelegate
+
+    override val links: LinksClient by lazy { LinksClient(this) }
 
     override suspend fun close() {
         logger.i { "Closing StitchClient" }

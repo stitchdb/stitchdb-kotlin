@@ -36,7 +36,7 @@ Supported targets:
 
 *You don't necessarily need to install this library directly. It is a dependency of the other stitchdb-kt libraries.*
 
-Newest version: 1.2.0 (use the BOM: `com.stitchdb:bom`)
+Newest version: 1.3.0 (use the BOM: `com.stitchdb:bom`)
 
 ```kotlin
 dependencies {
@@ -179,3 +179,45 @@ stitchdb.analytics.stop()               // stop sending; waiting events stay on 
   (session token, else the project key); a batch is sent when the user signs in or out, so it belongs to one user.
   Passwords, tokens, keys and e-mail addresses are removed by StitchDB before anything is stored.
 - Analytics requests are not recorded as crash reporting breadcrumbs.
+
+# Deep links
+
+Short links `https://<project host or your domain>/l/<code>` (Studio › Links) open your app on the right screen when it
+is installed (Android App Links, iOS Universal Links) and otherwise send people to Google Play, the App Store or a web
+page. The app resolves the link it was opened with to its path and data, and on its first launch after an install can
+ask which link led to the install (deferred deep link, best effort).
+
+```kotlin
+// the app was opened by a link: Android, in onCreate / onNewIntent
+stitchdb.links.resolve(intent)?.let { link -> navigate(link.path, link.data) }
+stitchdb.links.resolve("https://go.shop.com/l/aB3kP9x")   // any URL or a bare code; null when it is not a short link
+
+// first launch after an install (asked once per install, later calls return null without a request)
+val first = stitchdb.links.deferred(context, referrer = referrerDetails.installReferrer) // Android
+val first = stitchdb.links.deferred(platform = "ios")                                    // other targets
+
+// make a link: signed-in users when the project allows it, any link with the service key
+val link = stitchdb.links.create(LinkInput(path = "/invite/7", data = mapOf("from" to "ana"), title = "Join me"))
+share(link.url)
+
+// service key: manage links
+stitchdb.links.list(search = "spring", limit = 20)       // LinkList(links, total), newest first
+stitchdb.links.get("summer", days = 30)                  // LinkStats: clicks, opens, installs per day, platforms, countries
+stitchdb.links.update("summer", LinkInput(disabled = true))
+stitchdb.links.remove("summer")
+LinksClient.codeFrom("https://go.shop.com/l/summer")     // "summer"
+```
+
+- `resolve` counts an open in Studio and sends the platform (`android` on Android, `ios` on iOS, none elsewhere; pass
+  `platform =` to choose). An expired or turned-off link throws `LinksException` with `statusCode` 410, an unknown one
+  404. Every failed request throws `LinksException` (402 the plan's links are used up, 403 not allowed, 409 the code is
+  taken, 429 rate limited); network errors throw `HttpRequestException`.
+- `deferred`: on Android pass the Play install referrer (`ReferrerDetails.installReferrer` from the Play Install
+  Referrer library, which your app adds and reads itself; the SDK has no dependency on it) for an exact match. Without
+  it the click is matched by network and platform within 2 hours of it, and each click is handed out once. After the
+  first answer a flag is kept next to the analytics queue (`deferred(context, ...)`: `filesDir/stitchdb-analytics/<project
+  host>`; JVM: the analytics directory, or `deferred(directory = ...)`; JS, Wasm and native targets: in memory only, so
+  remember it in the app). It is set only after a successful answer; `force = true` asks again (tests).
+- `LinkInput`: null fields are left out (unchanged on `update`), an empty string clears a text field, `removeExpiry =
+  true` clears `expiresAt`. `code` can only be chosen with the service key.
+- Requests go to `{projectUrl}/links/v1` as the signed-in user (session token, else the project key).

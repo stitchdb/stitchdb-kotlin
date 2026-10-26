@@ -34,7 +34,7 @@ Supported targets:
 
 # Installation
 
-Newest version: 1.2.0 (use the BOM: `com.stitchdb:bom`)
+Newest version: 1.3.0 (use the BOM: `com.stitchdb:bom`)
 
 ```kotlin
 dependencies {
